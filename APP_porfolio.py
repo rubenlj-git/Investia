@@ -417,16 +417,18 @@ def load_data():
     weights = weights[["Unnamed: 1", "Unnamed: 4", "Unnamed: 5"]]
     weights.columns = ["isin", "Participaciones", "Coste_medio"]
 
-    df_final = pd.read_json("NAV.json", orient="records").drop(columns="_updated", errors="ignore").set_index("date")
+    df_final = pd.read_json("NAV.json", orient="records")
+    last_date_nav = df_final["_updated"].unique()
+    df_final = df_final.drop(columns="_updated", errors="ignore").set_index("date")
     df_final.index = pd.to_datetime(df_final.index)
     df_final_ff = df_final.sort_index().ffill()
 
     signals = compute_signals(df_final_ff)
     metrics_df = perf_metrics(df_final_ff, rf_annual=0.0, periods_per_year=252).reset_index()
 
-    return nombre_fondo, carteras_x, weights, df_final, df_final_ff, signals, metrics_df
+    return nombre_fondo, carteras_x, weights, df_final, df_final_ff, signals, metrics_df, last_date_nav
 
-nombre_fondo, carteras_x, weights, df_final, df_final_ff, signals, metrics_df = load_data()
+nombre_fondo, carteras_x, weights, df_final, df_final_ff, signals, metrics_df, last_date_nav = load_data()
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def build_metrics_tables(metrics_df, nombre_fondo, signals, weights, df_final):
@@ -979,7 +981,7 @@ selected = option_menu(
     #     st.metric(label=f"Net asset value in {str(ending_date)}", value=f"{calculate_net_asset_value(ret_df, benchmark, starting_date, ending_date)}€")
 ###########################################################################################################################################################################
 if selected=="Situación actual":
-
+    st.write(last_date_nav)
     cartera = backtest_cartera(df_final_ff, posiciones_df, False).dropna()
     cartera_100 = cartera.div(cartera.iloc[0]).mul(100).to_frame("Cartera_actual")
     dd = (cartera / cartera.cummax() - 1).to_frame("Drawdown")
