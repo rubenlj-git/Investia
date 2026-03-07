@@ -404,16 +404,15 @@ def show_backtest_report(name: str, out: dict):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data():
-
     conn = st.connection("gsheets", type=GSheetsConnection)
+    SPREADSHEET_URL = st.secrets["connections"]["gsheets"]["spreadsheet"]
 
-    nombre_fondo = conn.read(worksheet="Links", ttl=5)
+    nombre_fondo = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Links", ttl=5)
+    carteras_x = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Carteras_x", ttl=5)
+    weights = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="INDEX", ttl=5)
+
     nombre_fondo = nombre_fondo[["nombre_fondo", "isin", "categoria"]]
-
-    carteras_x = conn.read(worksheet="Carteras_x", ttl=5)
     carteras_x = carteras_x.drop(columns=["nombre_fondo"], errors="ignore")
-
-    weights = conn.read(worksheet="INDEX", ttl=5)
     weights = weights[["Unnamed: 1", "Unnamed: 4", "Unnamed: 5"]]
     weights.columns = ["isin", "Participaciones", "Coste_medio"]
 
