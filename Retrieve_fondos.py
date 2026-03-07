@@ -2,6 +2,7 @@ import re
 import requests
 import pandas as pd
 import yfinance as yf
+import os
 
 urls = pd.read_excel("Data/FIN.xlsx", sheet_name="Links")["links"].to_list()
 
@@ -23,14 +24,14 @@ params = {"start": "2015-01-01"}
 
 HEADERS = {
     "accept": "application/json",
-    "key": "OgcqanUxQ4S6Y5VVvnwlJayUuxeg8Ah5",
+    "key": os.environ["OgcqanUxQ4S6Y5VVvnwlJayUuxeg8Ah5"],
     "referer": "https://www.finect.com/",
     "origin": "https://www.finect.com",
     "user-agent": "Mozilla/5.0",
 }
 
 COOKIES = {
-    "_fi_s": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJick9HbDZzSnVjenYwVlpUTWRjRU1qUDBSMHpEZHF5NCIsImlhdCI6MTc2NjA3NTA3OCwiZXhwIjoxNzk3NjMyNjc4LCJobGQiOjE3NjYwNzg2NzgsImF1ZCI6ImZpbmVjdCIsInN1YiI6IjMzMjRjY2Y3NjQ1NzQ2Y2M5OWEzZWQ4Njc3NjA0YjU0IiwiUm9sZSI6WyJwbHVzIiwiYWxsIl19.-__2IinuETdy8roDcdNaFacvV60X400s96oGhFjJtes"
+    "_fi_s": os.environ["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJick9HbDZzSnVjenYwVlpUTWRjRU1qUDBSMHpEZHF5NCIsImlhdCI6MTc2NjA3NTA3OCwiZXhwIjoxNzk3NjMyNjc4LCJobGQiOjE3NjYwNzg2NzgsImF1ZCI6ImZpbmVjdCIsInN1YiI6IjMzMjRjY2Y3NjQ1NzQ2Y2M5OWEzZWQ4Njc3NjA0YjU0IiwiUm9sZSI6WyJwbHVzIiwiYWxsIl19.-__2IinuETdy8roDcdNaFacvV60X400s96oGhFjJtes"]
 }
 
 df_final = pd.DataFrame()
