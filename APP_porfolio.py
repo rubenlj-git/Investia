@@ -417,7 +417,7 @@ def load_data():
     weights = weights[["Unnamed: 1", "Unnamed: 4", "Unnamed: 5"]]
     weights.columns = ["isin", "Participaciones", "Coste_medio"]
 
-    df_final = pd.read_json("NAV.json", orient="records").set_index("date")
+    df_final = pd.read_json("NAV.json", orient="records").drop(columns="_updated", errors="ignore").set_index("date")
     df_final.index = pd.to_datetime(df_final.index)
     df_final_ff = df_final.sort_index().ffill()
 

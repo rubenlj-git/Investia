@@ -3,6 +3,8 @@ import requests
 import pandas as pd
 import yfinance as yf
 import os
+from datetime import datetime
+
 
 urls = pd.read_excel("Data/FIN.xlsx", sheet_name="Links")["links"].to_list()
 
