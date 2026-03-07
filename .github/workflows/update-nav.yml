@@ -37,6 +37,18 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "Estado del repo antes del commit:"
+          git status
+
           git add NAV.json
-          git diff --cached --quiet || git commit -m "Update NAV.json"
-          git push
+
+          echo "Cambios detectados:"
+          git diff --staged --name-only
+
+          if git diff --cached --quiet; then
+            echo "NAV.json no ha cambiado"
+          else
+            git commit -m "Update NAV.json"
+            git push
+          fi
