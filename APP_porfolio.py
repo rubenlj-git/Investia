@@ -1,21 +1,9 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import os
 import plotly.graph_objects as go
+import plotly.express as px
 from streamlit_option_menu import option_menu
-import plotly.express as px
-import re
-import requests
-import seaborn as sns
-from concurrent.futures import ThreadPoolExecutor
-import plotly.express as px
-import streamlit as st
-import yfinance as yf
-import gspread
-from google.oauth2.service_account import Credentials
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
 
