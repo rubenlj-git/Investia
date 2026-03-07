@@ -3,7 +3,7 @@ import requests
 import pandas as pd
 import yfinance as yf
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 urls = pd.read_excel("Data/FIN.xlsx", sheet_name="Links")["links"].to_list()
@@ -69,4 +69,7 @@ df_final = df_final.join(df_yahoo, how="outer")
 df_final = df_final.reset_index().rename(columns={"index":"date"})
 df_final["date"] = pd.to_datetime(df_final["date"], "%d/%m/%Y")
 df_final["EUR"]= 1
+
+
+df_final["_updated"] = datetime.now(timezone.utc).isoformat()
 df_final.to_json("NAV.json", orient="records")
