@@ -981,7 +981,7 @@ selected = option_menu(
     #     st.metric(label=f"Net asset value in {str(ending_date)}", value=f"{calculate_net_asset_value(ret_df, benchmark, starting_date, ending_date)}€")
 ###########################################################################################################################################################################
 if selected=="Situación actual":
-    st.write(last_date_nav)
+    st.caption(f"Last update · {last_date_nav[0][:19]}")
     cartera = backtest_cartera(df_final_ff, posiciones_df, False).dropna()
     cartera_100 = cartera.div(cartera.iloc[0]).mul(100).to_frame("Cartera_actual")
     dd = (cartera / cartera.cummax() - 1).to_frame("Drawdown")
