@@ -23,13 +23,168 @@ st.set_page_config(
     page_title="Investia",page_icon=":bar_chart:",layout="wide"
 )
 
+@st.cache_resource
+def calculate_returns(df):
+    df = df.set_index("Date")
+    returns_df = pd.DataFrame()
+    for i in df.columns.tolist():
+        returns_df[i] = df[i].pct_change()
+    return(returns_df)
+@st.cache_resource
+def calculate_cum_ret(df):
+    df_cumprod = ((df +1).cumprod())-1
+    return(df_cumprod) 
+@st.cache_resource
+def returns_annualized(df):
+    mean_return_year = df.resample("Y").apply(
+        lambda x: np.prod(1 + x)**(12 / len(x)) - 1
+    )
+    mean_return_year = mean_return_year.reset_index()
+    mean_return_year['Year']= pd.DatetimeIndex(mean_return_year['Date']).year
+    return(round(mean_return_year.drop("Date",axis=1).set_index("Year").mul(100),2))
+@st.cache_resource
+def calculate_annual_volatility(df, index, starting_date, ending_date):
+    df = df[(df.index>=pd.to_datetime(starting_date)) & (df.index<=pd.to_datetime(ending_date))][index]
+    monthly_volatility = df.std()
+    annual_volatility = monthly_volatility * np.sqrt(12)
+    return annual_volatility
+@st.cache_resource
+def calculate_annual_returns(df):
+    monthly_returns = df.mean()
+    annual_returns = (1 + monthly_returns)**12-1
+    return annual_returns
+@st.cache_resource
+def calculate_ratio_sharpe(annual_ret_avg, risk_free_rate, annual_vol_avg):
+    sharpe_r= (annual_ret_avg - risk_free_rate)/annual_vol_avg
+    return round(sharpe_r,2)
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource
+def calculate_cagr(df, index, starting_date, ending_date):
+    df = df[(df.index>=pd.to_datetime(starting_date)) & (df.index<=pd.to_datetime(ending_date))]
+    df = df +1
+    beginning_value = df[index].dropna().values[0]
+    ending_value = df[index].dropna().values[-1]
+    start_date = df[index].dropna().index[0]
+    end_date = df[index].dropna().index[-1]
+    n_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+    n_years = n_months / 12
+    cagr = ((ending_value / beginning_value) ** (1 / n_years)) - 1
+    return cagr
+@st.cache_resource
+def calculate_net_asset_value(ret_df, index, starting_date, ending_date):
+    ret_df = ret_df[(ret_df.index>=pd.to_datetime(starting_date)) & (ret_df.index<=pd.to_datetime(ending_date))]
+    cumulative_ret_df = calculate_cum_ret(ret_df)
+    net_asset_value = 10000*(1+cumulative_ret_df[index].values[-1])
+    return round(net_asset_value,2)
+
+@st.cache_resource
+def maximum_drawdown(df):
+    max_drawdown_info = {}
+    for column in df.columns.tolist():
+        cumulative_returns = (1 + df[column]).cumprod()
+        running_max = cumulative_returns.cummax()
+        drawdown = (cumulative_returns - running_max) / running_max
+        max_drawdown = drawdown.min()
+        end_date = drawdown.idxmin()
+        
+        start_date = cumulative_returns[cumulative_returns.index<=end_date].idxmax()
+        
+        max_drawdown_info[column] = {
+            'Max Drawdown': max_drawdown,
+            'Start Date': start_date,
+            'End Date': end_date
+        }
+    
+    return max_drawdown_info
+@st.cache_resource
+def calculate_minimum_investment_horizon(df, max_years=15):
+    prob_winning_dict = {}
+
+    for column in df.columns.tolist():
+        prob_winning_list = []
+
+        for years in range(1, max_years + 1):
+            window_size = years * 12
+            rolling_cum_returns = df[column].rolling(window=window_size).apply(lambda x: (1 + x).prod() - 1)
+            prob_winning = (1 - len(rolling_cum_returns[rolling_cum_returns < 0]) / len(rolling_cum_returns))
+            prob_winning_list.append(prob_winning)
+
+        prob_winning_dict[column] = prob_winning_list
+
+    # Convert the dictionary to a DataFrame
+    prob_winning_df = pd.DataFrame(prob_winning_dict, index=range(1, max_years + 1))
+    prob_winning_df.index.name = 'Years'
+    
+    return prob_winning_df
+
+@st.cache_resource
+def portfolio_returns(df_ret, list_weights):
+    weights = np.array(list_weights)
+
+    if df_ret.shape[1] != len(weights):
+        st.warning(":red[WARNING: El número de índices debe coincidir con el número de ponderaciones proporcionadas.]", icon="⚠️")
+
+    if not np.isclose(weights.sum(), 1.0):
+        st.warning("WARNING: Las ponderaciones deben sumar 1. Las ponderaciones proporcionadas suman {:.2f}".format(weights.sum()), icon="⚠️")
+
+    weighted_returns = df_ret.dropna().mul(weights, axis=1)
+    portfolio_returns = weighted_returns.sum(axis=1)
+    portfolio_df = pd.DataFrame(portfolio_returns, columns=['Portfolio'])
+
+    return (portfolio_df)
+
+@st.cache_resource
+def plot_line_chart(df, index=None):
+    fig = go.Figure()
+
+    if index is not None:
+        # When an index (column name) is provided, plot just that column
+        y_data = df[index].dropna()
+        y_data = (y_data+1)*10000
+        fig.add_trace(go.Scatter(
+            x=y_data.index,  # Assuming 'Date' is already the index
+            y=y_data.values,
+            mode='lines',
+            name=index
+        ))
+        fig.update_layout(
+            title=f'Evolution of 10.000€ invested in {index}',
+            xaxis_title='Date',
+            yaxis_title=f'{index} (%)',
+            xaxis=dict(
+                showline=True,
+                showgrid=False,
+                showticklabels=True,
+                tickangle=-45
+            ),
+            yaxis=dict(showgrid=True),
+        )
+    else:
+        # When no index is provided, plot all columns
+        for column in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df.index,  # Assuming 'Date' is the index of the DataFrame
+                y=df[column],
+                mode='lines',
+                name=column
+            ))
+        fig.update_layout(
+            title='Cumulative Returns Over Time',
+            xaxis_title='Date',
+            yaxis_title='Cumulative Return (%)',
+            xaxis=dict(showline=True, showgrid=False, showticklabels=True),
+            yaxis=dict(showgrid=True),
+            legend=dict(x=0.01, y=0.99)
+        )
+
+    return fig
+
+################################################################################################################
+@st.cache_resource
 def compute_returns(prices: pd.DataFrame) -> pd.DataFrame:
     """Retornos simples diarios."""
     return prices.pct_change()
-
-@st.cache_data(show_spinner=False)
+@st.cache_resource
 def compute_cagr(prices: pd.Series, periods_per_year: int = 252) -> float:
     """CAGR basado en primera y última observación válidas."""
     s = prices.dropna()
@@ -40,8 +195,7 @@ def compute_cagr(prices: pd.Series, periods_per_year: int = 252) -> float:
         return np.nan
     years = n_days / 365.25
     return (s.iloc[-1] / s.iloc[0]) ** (1 / years) - 1
-
-@st.cache_data(show_spinner=False)
+@st.cache_resource
 def _max_drawdown(prices: pd.Series) -> float:
     """Máximo drawdown (valor negativo)."""
     s = prices.dropna()
@@ -49,8 +203,7 @@ def _max_drawdown(prices: pd.Series) -> float:
         return np.nan
     dd = s / s.cummax() - 1
     return dd.min()
-
-@st.cache_data(show_spinner=False)
+@st.cache_resource
 def rolling_max_drawdown(prices: pd.Series, window: int = 252) -> pd.Series:
     """Max drawdown rolling en ventana (por ejemplo 252 sesiones ~ 1 año)."""
     s = prices.dropna()
@@ -61,8 +214,7 @@ def rolling_max_drawdown(prices: pd.Series, window: int = 252) -> pd.Series:
         dd = x / x.cummax() - 1
         return dd.min()
     return s.rolling(window).apply(_mdd, raw=False)
-
-@st.cache_data(show_spinner=False)
+@st.cache_resource
 def perf_metrics(prices: pd.DataFrame, rf_annual: float = 0.0, periods_per_year: int = 360) -> pd.DataFrame:
     rets = compute_returns(prices)
     out = []
@@ -107,15 +259,14 @@ def perf_metrics(prices: pd.DataFrame, rf_annual: float = 0.0, periods_per_year:
             "cagr": cagr,
             "vol_anual": vol_annual,
             "sharpe": sharpe,
-            "current_drawdown": current_dd,
+            "current_drawdown":current_dd,
             "max_drawdown": mdd,
             "z_score3meses": z_last,
-            "ultimo_vl": ultimo_nav
+            "ultimo_vl":ultimo_nav
         })
 
     return pd.DataFrame(out).set_index("isin").sort_values("sharpe", ascending=False)
-
-@st.cache_data(show_spinner=False)
+@st.cache_resource
 def top3_dd(s: pd.Series) -> pd.DataFrame:
     s = s.dropna()
     if s.empty:
@@ -141,20 +292,14 @@ def top3_dd(s: pd.Series) -> pd.DataFrame:
         recovery_idx = rec_candidates.index.min() if not rec_candidates.empty else pd.NaT
         days_to_recovery = (recovery_idx - start_idx).days if pd.notna(recovery_idx) else np.nan
         out_rows.append(
-            {
-                "max_drawdown": mdd,
-                "start": start_idx,
-                "trough": trough_idx,
-                "recovery": recovery_idx,
-                "days_to_recover": days_to_recovery
-            }
+            {"max_drawdown": mdd, "start": start_idx, "trough": trough_idx, "recovery": recovery_idx, "days_to_recover": days_to_recovery}
         )
 
     out = pd.DataFrame(out_rows)
     return out.sort_values("max_drawdown").head(10).reset_index(drop=True)
-
-@st.cache_data(show_spinner=False)
+@st.cache_resource
 def compute_signals(P: pd.DataFrame) -> pd.DataFrame:
+    # ---------- INDICADORES (último valor) ----------
     z = (P - P.rolling(63).mean()) / P.rolling(63).std()
     z_last = z.iloc[-1]
     p_min = P.rolling(63).min().iloc[-1]
@@ -162,7 +307,7 @@ def compute_signals(P: pd.DataFrame) -> pd.DataFrame:
     pct = (P.iloc[-1] - p_min) / (p_max - p_min)
     dist_ma63 = P.iloc[-1] / P.rolling(63).mean().iloc[-1] - 1
     dd = P.iloc[-1] / P.cummax().iloc[-1] - 1
-
+    # ---------- SEÑALES (umbrales suaves para fondos) ----------
     signals = pd.DataFrame(index=P.columns)
     signals["zscore"] = np.where(
         z_last > 0.5, "sobrecompra",
@@ -179,7 +324,7 @@ def compute_signals(P: pd.DataFrame) -> pd.DataFrame:
     signals["drawdown"] = np.where(
         dd < -0.03, "sobreventa", "neutral"
     )
-
+    # ---------- CONSENSO ----------
     score = (
         (signals == "sobrecompra").sum(axis=1)
         - (signals == "sobreventa").sum(axis=1)
@@ -190,33 +335,6 @@ def compute_signals(P: pd.DataFrame) -> pd.DataFrame:
         np.where(score <= -2, "sobreventa", "neutral")
     )
     return signals.reset_index().rename(columns={"index": "isin"})
-
-@st.cache_data(show_spinner=False)
-def backtest_cartera(
-    P: pd.DataFrame,
-    w,
-    plot: bool = True
-):
-    R = P[w.index].pct_change()
-    R = R.loc[R[w.index].notna().all(1)].dot(w)
-    nav = (1 + R).cumprod()
-    top3 = top3_dd(nav)
-    years = (R.index[-1] - R.index[0]).days / 365.25
-    retorno_anualizado = (1 + R).prod()**(1/years) - 1
-    vol_anualizada = R.std() * np.sqrt(252)
-    out = {
-        "NAV": nav,
-        "CAGR": retorno_anualizado,
-        "vol": vol_anualizada,
-        "Drawdown": top3
-    }
-    return out if plot else nav
-
-
-
-
-
-################################################################################################################
 def retornos(df, ticker, year_month, n_year_month):
     serie = df[ticker].dropna()
     hoy = serie.index.max()
@@ -241,6 +359,74 @@ def volatilidad(df, ticker, n):
     if r.empty:
         return np.nan
     return float(r.std(ddof=1) * np.sqrt(12))
+@st.cache_resource
+def backtest_cartera(
+    P: pd.DataFrame,
+    w,
+    plot: bool = True
+):
+    R = P[w.index].pct_change()
+    R = R.loc[R[w.index].notna().all(1)].dot(w)     # backtest desde primera fecha común
+    nav = (1 + R).cumprod()
+    top3 = top3_dd(nav)
+    years = (R.index[-1] - R.index[0]).days / 365.25
+    retorno_anualizado = (1 + R).prod()**(1/years) - 1
+    vol_anualizada = R.std() * np.sqrt(252)
+    if plot==True:
+        return({"CAGR": round(retorno_anualizado,3), "vol":round(vol_anualizada, 3), "Drawdown": top3})
+    else:
+        return(nav / nav.iloc[0] * 100)
+
+    # return out, retorno_anualizado, vol_anualizada, top3
+@st.cache_resource
+def plot_donut_posiciones(metrics_df, amount_col="Posición", label_col="nombre_fondo",
+                          title="Distribución de la inversión por fondo (€)", figsize=(13,13)):
+    
+    s = (metrics_df[metrics_df["Posición"]>0][[amount_col, label_col]]
+         .dropna()
+         .assign(**{amount_col: pd.to_numeric(metrics_df[metrics_df["Posición"]>0][amount_col], errors="coerce")})
+         .dropna())
+    s = s[s[amount_col] > 0].sort_values(amount_col, ascending=False)
+    if s.empty: 
+        return
+
+    amounts = s[amount_col].to_numpy()
+    labels  = s[label_col].astype(str).to_list()
+    colors  = plt.cm.Set3(np.linspace(0, 1, len(amounts)))
+
+    fig, ax = plt.subplots(figsize=figsize)
+    wedges, _, autotexts = ax.pie(
+        amounts, labels=None,
+        autopct=lambda p: f"{p:.1f}%",
+        startangle=90, colors=colors,
+        wedgeprops=dict(width=0.4, edgecolor="white")
+    )
+    plt.setp(autotexts, size=10, weight="bold", color="black")
+
+    legend_labels = [f"{n} — {a:,.0f} €" for n, a in zip(labels, amounts)]
+    ax.legend(wedges, legend_labels, title="Fondos", loc="center left",
+              bbox_to_anchor=(1, 0.5), frameon=False)
+
+    ax.set(aspect="equal")
+    ax.set_title(title, fontsize=14, weight="bold")
+    plt.tight_layout()
+    plt.show()
+
+def plot_donut_cartera(df, category_col="categoria", value_col="Posición", title="Distribución por Categoría"):
+    fig = px.pie(
+        df,
+        names=category_col,
+        values=value_col,
+        hole=0.4,                  # donut effect
+        title=title
+    )
+    
+    fig.update_traces(
+        textposition='inside',
+        textinfo='percent+label'
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 @st.cache_resource
 def plot_treemap_cartera(df, title="Renta Variable"):
     df = df.copy()
@@ -414,75 +600,35 @@ def show_backtest_report(name: str, out: dict):
     st.dataframe(dd_show[["Max DD","Start","Trough","Recovery","Días"]], use_container_width=True, hide_index=True)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_data():
-
-    conn = st.connection("gsheets", type=GSheetsConnection)
-
-    nombre_fondo = conn.read(worksheet="Links", ttl=5)
-    nombre_fondo = nombre_fondo[["nombre_fondo", "isin", "categoria"]]
-
-    carteras_x = conn.read(worksheet="Carteras_x", ttl=5)
-    carteras_x = carteras_x.drop(columns=["nombre_fondo"], errors="ignore")
-
-    weights = conn.read(worksheet="INDEX", ttl=5)
-    weights = weights[["Unnamed: 1", "Unnamed: 4", "Unnamed: 5"]]
-    weights.columns = ["isin", "Participaciones", "Coste_medio"]
-
-    df_final = pd.read_json("NAV.json", orient="records").set_index("date")
-    df_final.index = pd.to_datetime(df_final.index)
-    df_final_ff = df_final.sort_index().ffill()
-
-    signals = compute_signals(df_final_ff)
-    metrics_df = perf_metrics(df_final_ff, rf_annual=0.0, periods_per_year=252).reset_index()
-
-    return nombre_fondo, carteras_x, weights, df_final, df_final_ff, signals, metrics_df
-
-nombre_fondo, carteras_x, weights, df_final, df_final_ff, signals, metrics_df = load_data()
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def build_metrics_tables(metrics_df, nombre_fondo, signals, weights, df_final):
-
-    metrics_df = pd.merge(metrics_df, nombre_fondo, how="left", on="isin")
-    metrics_df = pd.merge(metrics_df, signals, how="left", on="isin")
-    metrics_df = pd.merge(metrics_df, weights, how="left", on="isin")
-
-    metrics_df["Posición"] = metrics_df["ultimo_vl"] * metrics_df["Participaciones"]
-    metrics_df["Perc_posicion"] = (metrics_df["Posición"] / metrics_df["Posición"].sum() * 100).round(2)
-    metrics_df["Posición_ini"] = metrics_df["Coste_medio"] * metrics_df["Participaciones"]
-    metrics_df["% Var"] = (metrics_df["Posición"] / metrics_df["Posición_ini"] - 1).mul(100).round(2)
-    metrics_df["Var"] = (metrics_df["Posición"] - metrics_df["Posición_ini"]).round(2)
-
-    dd_top3 = pd.concat(
-        {
-            isin: top3_dd(df_final[isin]).assign(rank=lambda d: np.arange(1, len(d) + 1))
-            for isin in df_final.columns
-        },
-        names=["isin"]
-    ).reset_index(level=0).reset_index(drop=True)
-
-    posiciones_df = (
-        metrics_df[metrics_df["inicio_hist"] <= "2020-02-08"]
-        .set_index("isin")["Perc_posicion"]
-        .dropna() / 100
-    )
-
-    dd_top3 = pd.merge(dd_top3, nombre_fondo, how="left", on="isin")
-
-    ddtop_aux = (
-        dd_top3[dd_top3["rank"] == 1]
-        .sort_values("days_to_recover", ascending=False)[["isin", "start", "trough", "recovery", "days_to_recover"]]
-        .dropna()
-    )
-
-    metrics_df_final = pd.merge(metrics_df, ddtop_aux, how="left", on="isin").set_index("nombre_fondo").reset_index()
-    metrics_df_final["nombre_fondo_isin"] = metrics_df_final["nombre_fondo"] + " (" + metrics_df_final["isin"] + ")"
-
-    return metrics_df, dd_top3, posiciones_df, ddtop_aux, metrics_df_final
-metrics_df, dd_top3, posiciones_df, ddtop_aux, metrics_df_final = build_metrics_tables(
-    metrics_df, nombre_fondo, signals, weights, df_final
-)
-
+conn = st.connection("gsheets", type=GSheetsConnection)
+nombre_fondo = conn.read(worksheet="Links")[["nombre_fondo", "isin", "categoria"]]
+carteras_x = conn.read(worksheet="Carteras_x").drop("nombre_fondo",axis=1)
+df_final = pd.read_json("NAV.json", orient="records").set_index("date")
+df_final_ff = df_final.sort_index().ffill()
+signals = compute_signals(df_final_ff)
+metrics_df = perf_metrics(df_final_ff, rf_annual=0.0, periods_per_year=252).reset_index()
+metrics_df = pd.merge(metrics_df, nombre_fondo, how="left", on="isin")
+metrics_df = pd.merge(metrics_df, signals, how="left", on="isin")
+weights = conn.read(worksheet="INDEX")[["Unnamed: 1", "Unnamed: 4", "Unnamed: 5"]]
+weights.columns= ["isin", "Participaciones", "Coste_medio"]
+metrics_df = pd.merge(metrics_df, weights, how="left", on="isin")
+metrics_df["Posición"] = metrics_df["ultimo_vl"]*metrics_df["Participaciones"]
+metrics_df['Perc_posicion'] = (metrics_df['Posición'] / metrics_df['Posición'].sum() * 100).round(2)
+metrics_df["Posición_ini"] = metrics_df["Coste_medio"]*metrics_df["Participaciones"]
+metrics_df['% Var'] = (metrics_df['Posición']/metrics_df['Posición_ini']-1).mul(100).round(2)
+metrics_df['Var'] = (metrics_df['Posición'] - metrics_df['Posición_ini']).round(2)
+dd_top3 = pd.concat(
+    {
+        isin: top3_dd(df_final[isin]).assign(rank=lambda d: np.arange(1, len(d) + 1))
+        for isin in df_final.columns
+    },
+    names=["isin"]
+).reset_index(level=0).reset_index(drop=True)
+posiciones_df = metrics_df[metrics_df["inicio_hist"] <= "2020-02-08"].set_index("isin")["Perc_posicion"].dropna() / 100 # [metrics_df["inicio_hist"] <= "2020-02-08"]
+dd_top3 = pd.merge(dd_top3, nombre_fondo, how="left", on="isin")
+ddtop_aux = dd_top3[(dd_top3["rank"]==1)].sort_values("days_to_recover", ascending=False)[["isin", "start", "trough", "recovery", "days_to_recover"]].dropna()
+metrics_df_final = pd.merge(metrics_df, ddtop_aux, how="left", on="isin").set_index("nombre_fondo").reset_index()
+metrics_df_final["nombre_fondo_isin"] = metrics_df_final["nombre_fondo"] + " (" +metrics_df_final["isin"] + ")"
 def retornos(df, ticker, year_month, n_year_month):
     serie = df[ticker].dropna()
     hoy = serie.index.max()
@@ -563,177 +709,21 @@ metrics_df_final["categoria_riesgo"] = metrics_df_final.apply(
 )
 
 ############################################################################################################
-# @st.cache_resource
-# def calculate_minimum_investment_horizon(df, max_years=15):
-#     prob_winning_dict = {}
 
-#     for column in df.columns.tolist():
-#         prob_winning_list = []
-
-#         for years in range(1, max_years + 1):
-#             window_size = years * 12
-#             rolling_cum_returns = df[column].rolling(window=window_size).apply(lambda x: (1 + x).prod() - 1)
-#             prob_winning = (1 - len(rolling_cum_returns[rolling_cum_returns < 0]) / len(rolling_cum_returns))
-#             prob_winning_list.append(prob_winning)
-
-#         prob_winning_dict[column] = prob_winning_list
-
-#     # Convert the dictionary to a DataFrame
-#     prob_winning_df = pd.DataFrame(prob_winning_dict, index=range(1, max_years + 1))
-#     prob_winning_df.index.name = 'Years'
-    
-#     return prob_winning_df
-
-# @st.cache_resource
-# def portfolio_returns(df_ret, list_weights):
-#     weights = np.array(list_weights)
-
-#     if df_ret.shape[1] != len(weights):
-#         st.warning(":red[WARNING: El número de índices debe coincidir con el número de ponderaciones proporcionadas.]", icon="⚠️")
-
-#     if not np.isclose(weights.sum(), 1.0):
-#         st.warning("WARNING: Las ponderaciones deben sumar 1. Las ponderaciones proporcionadas suman {:.2f}".format(weights.sum()), icon="⚠️")
-
-#     weighted_returns = df_ret.dropna().mul(weights, axis=1)
-#     portfolio_returns = weighted_returns.sum(axis=1)
-#     portfolio_df = pd.DataFrame(portfolio_returns, columns=['Portfolio'])
-
-#     return (portfolio_df)
-
-# @st.cache_resource
-# def plot_line_chart(df, index=None):
-#     fig = go.Figure()
-
-#     if index is not None:
-#         # When an index (column name) is provided, plot just that column
-#         y_data = df[index].dropna()
-#         y_data = (y_data+1)*10000
-#         fig.add_trace(go.Scatter(
-#             x=y_data.index,  # Assuming 'Date' is already the index
-#             y=y_data.values,
-#             mode='lines',
-#             name=index
-#         ))
-#         fig.update_layout(
-#             title=f'Evolution of 10.000€ invested in {index}',
-#             xaxis_title='Date',
-#             yaxis_title=f'{index} (%)',
-#             xaxis=dict(
-#                 showline=True,
-#                 showgrid=False,
-#                 showticklabels=True,
-#                 tickangle=-45
-#             ),
-#             yaxis=dict(showgrid=True),
-#         )
-#     else:
-#         # When no index is provided, plot all columns
-#         for column in df.columns:
-#             fig.add_trace(go.Scatter(
-#                 x=df.index,  # Assuming 'Date' is the index of the DataFrame
-#                 y=df[column],
-#                 mode='lines',
-#                 name=column
-#             ))
-#         fig.update_layout(
-#             title='Cumulative Returns Over Time',
-#             xaxis_title='Date',
-#             yaxis_title='Cumulative Return (%)',
-#             xaxis=dict(showline=True, showgrid=False, showticklabels=True),
-#             yaxis=dict(showgrid=True),
-#             legend=dict(x=0.01, y=0.99)
-#         )
-
-#     return fig
-# @st.cache_resource
-# def bond_returns_from_yield(yield_series, maturity):
-#     y = yield_series / 100.0
-#     duration_map = {
-#         2: 1.9,
-#         5: 4.7,
-#         10: 8.5,
-#         30: 18.0
-#     }
-#     D = duration_map[maturity]
-#     dy = y.diff()
-#     r = y.shift(1)/12 - D * dy
-#     price = 100 * (1 + r).cumprod()
-#     return price
-
-# @st.cache_resource
-# def calculate_returns(df):
-#     df = df.set_index("Date")
-#     returns_df = pd.DataFrame()
-#     for i in df.columns.tolist():
-#         returns_df[i] = df[i].pct_change()
-#     return(returns_df)
-# @st.cache_resource
-# def calculate_cum_ret(df):
-#     df_cumprod = ((df +1).cumprod())-1
-#     return(df_cumprod) 
-# @st.cache_resource
-# def returns_annualized(df):
-#     mean_return_year = df.resample("Y").apply(
-#         lambda x: np.prod(1 + x)**(12 / len(x)) - 1
-#     )
-#     mean_return_year = mean_return_year.reset_index()
-#     mean_return_year['Year']= pd.DatetimeIndex(mean_return_year['Date']).year
-#     return(round(mean_return_year.drop("Date",axis=1).set_index("Year").mul(100),2))
-# @st.cache_resource
-# def calculate_annual_volatility(df, index, starting_date, ending_date):
-#     df = df[(df.index>=pd.to_datetime(starting_date)) & (df.index<=pd.to_datetime(ending_date))][index]
-#     monthly_volatility = df.std()
-#     annual_volatility = monthly_volatility * np.sqrt(12)
-#     return annual_volatility
-# @st.cache_resource
-# def calculate_annual_returns(df):
-#     monthly_returns = df.mean()
-#     annual_returns = (1 + monthly_returns)**12-1
-#     return annual_returns
-# @st.cache_resource
-# def calculate_ratio_sharpe(annual_ret_avg, risk_free_rate, annual_vol_avg):
-#     sharpe_r= (annual_ret_avg - risk_free_rate)/annual_vol_avg
-#     return round(sharpe_r,2)
-
-# @st.cache_resource
-# def calculate_cagr(df, index, starting_date, ending_date):
-#     df = df[(df.index>=pd.to_datetime(starting_date)) & (df.index<=pd.to_datetime(ending_date))]
-#     df = df +1
-#     beginning_value = df[index].dropna().values[0]
-#     ending_value = df[index].dropna().values[-1]
-#     start_date = df[index].dropna().index[0]
-#     end_date = df[index].dropna().index[-1]
-#     n_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
-#     n_years = n_months / 12
-#     cagr = ((ending_value / beginning_value) ** (1 / n_years)) - 1
-#     return cagr
-# @st.cache_resource
-# def calculate_net_asset_value(ret_df, index, starting_date, ending_date):
-#     ret_df = ret_df[(ret_df.index>=pd.to_datetime(starting_date)) & (ret_df.index<=pd.to_datetime(ending_date))]
-#     cumulative_ret_df = calculate_cum_ret(ret_df)
-#     net_asset_value = 10000*(1+cumulative_ret_df[index].values[-1])
-#     return round(net_asset_value,2)
-
-# @st.cache_resource
-# def maximum_drawdown(df):
-#     max_drawdown_info = {}
-#     for column in df.columns.tolist():
-#         cumulative_returns = (1 + df[column]).cumprod()
-#         running_max = cumulative_returns.cummax()
-#         drawdown = (cumulative_returns - running_max) / running_max
-#         max_drawdown = drawdown.min()
-#         end_date = drawdown.idxmin()
-        
-#         start_date = cumulative_returns[cumulative_returns.index<=end_date].idxmax()
-        
-#         max_drawdown_info[column] = {
-#             'Max Drawdown': max_drawdown,
-#             'Start Date': start_date,
-#             'End Date': end_date
-#         }
-    
-#     return max_drawdown_info
-
+@st.cache_resource
+def bond_returns_from_yield(yield_series, maturity):
+    y = yield_series / 100.0
+    duration_map = {
+        2: 1.9,
+        5: 4.7,
+        10: 8.5,
+        30: 18.0
+    }
+    D = duration_map[maturity]
+    dy = y.diff()
+    r = y.shift(1)/12 - D * dy
+    price = 100 * (1 + r).cumprod()
+    return price
 
 # @st.cache_resource
 # def import_yahoo_fin():
